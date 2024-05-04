@@ -2,12 +2,26 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/leetcode-golang-classroom/golang-fetch-currency-sample/internal/currency"
 )
 
+func runCurrencyWorker(
+	workerId int,
+	currencyChan <-chan currency.Currency,
+	resultChan chan<- currency.Currency) {
+	fmt.Printf("Worker %d started\n", workerId)
+	for c := range currencyChan {
+		rates, err := currency.FetchCurrencyRates(c.Code)
+		if err != nil {
+			panic(err)
+		}
+		c.Rates = rates
+		resultChan <- c
+	}
+	fmt.Printf("Worker %d stopped\n", workerId)
+}
 func main() {
 	ce := &currency.MyCurrencyExchange{
 		Currencies: make(map[string]currency.Currency),
@@ -17,36 +31,31 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	wg := sync.WaitGroup{}
-	startTime := time.Now()
-	go func() {
-		for {
-			ce.Lock()
-			usd, ok := ce.Currencies["usd"]
-			ce.Unlock()
-			if ok {
-				fmt.Println("USD", usd.Rates)
-			}
-		}
-	}()
-	for code := range ce.Currencies {
-		wg.Add(1)
-		go func(code string) {
-			rates, err := currency.FetchCurrencyRates(code)
-			if err != nil {
-				panic(err)
-			}
-			ce.Lock()
-			ce.Currencies[code] = currency.Currency{
-				Code:  code,
-				Name:  ce.Currencies[code].Name,
-				Rates: rates,
-			}
-			ce.Unlock()
-			wg.Done()
-		}(code)
+	currencyChan := make(chan currency.Currency, len(ce.Currencies))
+	resultChan := make(chan currency.Currency, len(ce.Currencies))
+	for i := 0; i < 5; i++ {
+		go runCurrencyWorker(i, currencyChan, resultChan)
 	}
-	wg.Wait()
+	startTime := time.Now()
+	resultCount := 0
+	for _, curr := range ce.Currencies {
+		currencyChan <- curr
+	}
+	for {
+		if resultCount == len(ce.Currencies) {
+			fmt.Println("Closing resultChan")
+			close(currencyChan)
+			break
+		}
+		select {
+		case c := <-resultChan:
+			ce.Currencies[c.Code] = c
+			resultCount++
+		case <-time.After(1 * time.Second):
+			fmt.Println("Timeout")
+			return
+		}
+	}
 	fmt.Println("==============Result ===========")
 
 	for _, curr := range ce.Currencies {

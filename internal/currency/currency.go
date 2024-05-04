@@ -39,7 +39,7 @@ func (ce *MyCurrencyExchange) FetchAllCurrencies() error {
 	}
 	i := 0
 	for code, name := range csMap {
-		if i > 10 {
+		if i > 100 {
 			break
 		}
 		c := Currency{
